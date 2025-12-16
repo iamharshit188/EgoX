@@ -30,10 +30,17 @@ https://github.com/user-attachments/assets/5f599ad0-0922-414b-a8ab-e789da068efa
 
 ## 🛠️ Environment Setup
 
+Create a conda environment and install dependencies:
+
 ```bash
+# Create conda environment
 conda create -n egox python=3.10 -y
 conda activate egox
+
+# Install PyTorch with CUDA 12.1
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Install other dependencies
 pip install -r requirements.txt
 ```
 
