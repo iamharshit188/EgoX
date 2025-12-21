@@ -73,10 +73,11 @@ Download the trained EgoX LoRA weights using one of the following methods:
 ```bash
 pip install huggingface_hub
 python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='DAVIAN-Robotics/EgoX', local_dir='./checkpoints/EgoX', allow_patterns='*.safetensors')"
+```
 
 **Option 2: Google Drive**
 - Download from [Google Drive](https://drive.google.com/file/d/1Q7j7LVI4YiSkwzNMBBiyLS1rT3HMcNVB/view?usp=drive_link) and save to the `checkpoints/EgoX/` folder.
-```
+
 
 ## 🚀 Inference
 
