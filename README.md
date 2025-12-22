@@ -160,7 +160,7 @@ To prepare your own dataset, follow the instruction from [here](https://github.c
 
 ### Constraints
 Since EgoX is trained on the Ego-Exo4D dataset where exocentric view camera poses are fixed, you must provide exocentric videos with fixed camera poses as input during inference.
-Also, the model is trained on 448x448 and 448x784 resolutions. Please preprocess your videos to these resolutions.
+Also, the model is trained on 448x448(ego), 448x784(exo) resolutions and 49 frames. Please preprocess your videos to these resolutions.
 
 <details>
 <summary><b>Custom dataset init structure</b></summary>
