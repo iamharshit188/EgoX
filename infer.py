@@ -25,73 +25,68 @@ def main(args):
     _set_seed(args.seed)
 
     prompt_list = []
-    with open(args.prompt, 'r') as f:
-        for line in f.readlines():
-            prompt_list.append(line.strip())
+    if args.prompt is not None and os.path.exists(args.prompt):
+        with open(args.prompt, 'r') as f:
+            for line in f.readlines():
+                prompt_list.append(line.strip())
 
     exo_video_list = []
-    with open(args.exo_video_path, 'r') as f:
-        for line in f.readlines():
-            exo_video_list.append(line.strip())
+    if args.exo_video_path is not None and os.path.exists(args.exo_video_path):
+        with open(args.exo_video_path, 'r') as f:
+            for line in f.readlines():
+                exo_video_list.append(line.strip())
 
     ego_prior_video_list = []
-    with open(args.ego_prior_video_path, 'r') as f:
-        for line in f.readlines():
-            ego_prior_video_list.append(line.strip())
+    if args.ego_prior_video_path is not None and os.path.exists(args.ego_prior_video_path):
+        with open(args.ego_prior_video_path, 'r') as f:
+            for line in f.readlines():
+                ego_prior_video_list.append(line.strip())
     
-    assert len(prompt_list) == len(exo_video_list) == len(ego_prior_video_list)
 
     meta_data_file = args.meta_data_file
     depth_root = args.depth_root
     meta_data = load_from_json_file(meta_data_file)
+    meta_data = meta_data['test_datasets']
 
     prompts = prompt_list
     exo_videos = exo_video_list
     ego_prior_videos = ego_prior_video_list
     depth_map_paths = []
-    depth_intrinsics = []
-    camera_extrinsics = []
     camera_intrinsics = []
+    camera_extrinsics = []
     ego_extrinsics = []
     ego_intrinsics = []
     take_names = []
 
-    meta_data = meta_data['test_datasets']
-
-    i = 0
-    for ego_filename, meta in enumerate(meta_data):
-        if i >= len(exo_videos):
-            break
-        take_name = str(meta['path'].split('/')[-1]).split('.')[0]
-        i += 1
+    for i, meta in enumerate(meta_data):
+        exo_videos.append(meta['exo_path'])
+        ego_prior_videos.append(meta['ego_prior_path'])
+        prompts.append(meta['prompt'])
+        take_name = exo_videos[-1].split('/')[-2]
         depth_map_paths.append(Path(os.path.join(depth_root, take_name)))
-        depth_intrinsic = np.array([[1238.9679415422443, 0.0, 1920.0], [0.0, 1238.9679415422443, 1080.0], [0.0, 0.0, 1.0]])
-        depth_intrinsics.append(depth_intrinsic)
         camera_extrinsics.append(meta['camera_extrinsics'])
         camera_intrinsics.append(meta['camera_intrinsics'])
         ego_extrinsics.append(meta['ego_extrinsics'])
         ego_intrinsics.append(meta['ego_intrinsics'])
         take_names.append(take_name)
     
+    assert len(prompts) == len(exo_videos) == len(ego_prior_videos)
+    
     import shutil
     from transformers import CLIPVisionModel
 
-    sft_path=args.sft_path
+    model_path=args.model_path
+    transformer_path = os.path.join(model_path, 'transformer')
     lora_path=args.lora_path
     dtype=torch.bfloat16
 
     from core.finetune.models.wan_i2v.custom_transformer import WanTransformer3DModel_GGA as WanTransformer3DModel
-    config_path = os.path.join(sft_path, 'config.json')
-    model_path = './Wan2.1-I2V-14B-480P-Diffusers'
-    src_config_path = os.path.join(model_path, 'transformer', 'config.json')
-    if not os.path.exists(config_path):
-        shutil.copyfile(src_config_path, config_path)
-    transformer = WanTransformer3DModel.from_pretrained(sft_path, torch_dtype=dtype)
+    transformer = WanTransformer3DModel.from_pretrained(transformer_path, torch_dtype=dtype)
 
     image_encoder = CLIPVisionModel.from_pretrained(model_path, subfolder="image_encoder", torch_dtype=torch.float32)
 
-    from core.finetune.models.wan_i2v.sft_trainer import WanHBHImageToVideoPipeline
-    pipe = WanHBHImageToVideoPipeline.from_pretrained(model_path, image_encoder=image_encoder, transformer=transformer, torch_dtype=dtype)
+    from core.finetune.models.wan_i2v.sft_trainer import WanWidthConcatImageToVideoPipeline
+    pipe = WanWidthConcatImageToVideoPipeline.from_pretrained(model_path, image_encoder=image_encoder, transformer=transformer, torch_dtype=dtype)
     
     if lora_path:
         print('loading lora')
@@ -117,9 +112,8 @@ def main(args):
 
         if args.use_GGA:
             depth_map_path = depth_map_paths[i]
-            depth_intrinsic = depth_intrinsics[i]
-            camera_extrinsic = camera_extrinsics[i]
             camera_intrinsic = camera_intrinsics[i]
+            camera_extrinsic = camera_extrinsics[i]
             ego_extrinsic = ego_extrinsics[i]
             ego_intrinsic = ego_intrinsics[i]
 
@@ -144,6 +138,7 @@ def main(args):
                 ego_extrinsic = torch.cat([ego_extrinsic, torch.tensor([[[0, 0, 0, 1]]], dtype=ego_extrinsic.dtype).expand(ego_extrinsic.shape[0], -1, -1)], dim=1)
             if camera_extrinsic.shape == (3, 4):
                 camera_extrinsic = torch.cat([torch.tensor(camera_extrinsic, dtype=ego_extrinsic.dtype), torch.tensor([[0, 0, 0, 1]], dtype=ego_extrinsic.dtype)], dim=0)
+
             scale = 1/8
             scaled_intrinsic = ego_intrinsic.clone()
             scaled_intrinsic[0, 0] *= scale  # fx' = fx * s
@@ -157,9 +152,11 @@ def main(args):
 
             pixel_coords_cv = pixel_coords[..., :2].cpu().numpy().reshape(-1, 1, 2).astype(np.float32)
             K = scaled_intrinsic.cpu().numpy().astype(np.float32)
+
             import cv2
+            #! Ego cam distorion coeffs (Project Aria) - Hard coded
             distortion_coeffs = np.array([[-0.02340373583137989,0.09388021379709244,-0.06088035926222801,0.0053304750472307205,0.003342868760228157,-0.0006356257363222539,0.0005087381578050554,-0.0004747129278257489,-0.0011330085108056664,-0.00025734835071489215,0.00009328465239377692,0.00009424977179151028]])
-            D = distortion_coeffs.astype(np.float32) # 예: [k1, k2, k3, k4]
+            D = distortion_coeffs.astype(np.float32) # ex: [k1, k2, k3, k4, k5, k6, p1, p2, s1, s2, s3, s4]
             normalized_points = cv2.undistortPoints(pixel_coords_cv, K, D, R=np.eye(3), P=np.eye(3))
 
 
@@ -177,16 +174,15 @@ def main(args):
             height, width = depth_maps.shape[1], depth_maps.shape[2]
             cx = width / 2.0
             cy = height / 2.0
-            depth_intrinsic_scale_y = cy / depth_intrinsic[1,2]
-            depth_intrinsic_scale_x = cx / depth_intrinsic[0,2]
-            depth_intrinsic[0, 0] = depth_intrinsic[0, 0] * depth_intrinsic_scale_x
-            depth_intrinsic[1, 1] = depth_intrinsic[1, 1] * depth_intrinsic_scale_y
-            depth_intrinsic[0, 2] = cx
-            depth_intrinsic[1, 2] = cy
+            camera_intrinsic_scale_y = cy / camera_intrinsic[1,2]
+            camera_intrinsic_scale_x = cx / camera_intrinsic[0,2]
+            camera_intrinsic[0, 0] = camera_intrinsic[0, 0] * camera_intrinsic_scale_x
+            camera_intrinsic[1, 1] = camera_intrinsic[1, 1] * camera_intrinsic_scale_y
+            camera_intrinsic[0, 2] = cx
+            camera_intrinsic[1, 2] = cy
 
-            depth_intrinsic = np.array([depth_intrinsic[0, 0] , depth_intrinsic[1, 1], cx, cy])
+            camera_intrinsic = np.array([camera_intrinsic[0, 0] , camera_intrinsic[1, 1], cx, cy])
             
-
             disp_v, disp_u = torch.meshgrid(
                 torch.arange(depth_maps.shape[1], device=device).float(),
                 torch.arange(depth_maps.shape[2],device=device).float(),
@@ -199,7 +195,7 @@ def main(args):
             disp_u_cpu = disp_u.cpu()
             disp_v_cpu = disp_v.cpu()
             
-            pts, _, _ = iproj_disp(torch.from_numpy(depth_intrinsic), disp_cpu, disp_u_cpu, disp_v_cpu)
+            pts, _, _ = iproj_disp(torch.from_numpy(camera_intrinsic), disp_cpu, disp_u_cpu, disp_v_cpu)
 
             if isinstance(pts, torch.Tensor):
                 pts = pts.to(device)
@@ -288,14 +284,12 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate a video from a text prompt using Wan")
-    parser.add_argument("--prompt", type=str, required=True, help="prompt path list.txt")
-    parser.add_argument("--exo_video_path", type=str, required=True, help="exo video path list.txt")
-    parser.add_argument("--ego_prior_video_path", type=str, required=True, help="ego prior video path list.txt")
+    parser.add_argument("--prompt", type=str, help="prompt path list.txt", default=None)
+    parser.add_argument("--exo_video_path", type=str, help="exo video path list.txt", default=None)
+    parser.add_argument("--ego_prior_video_path", type=str, help="ego prior video path list.txt", default=None)
     parser.add_argument("--idx", type=int, default=-1)
-    parser.add_argument("--sft_path", type=str, default=None, help="The path of the SFT weights to be used")
+    parser.add_argument("--model_path", type=str, default=None, help="The path of the SFT weights to be used")
     parser.add_argument("--out", type=str, default="/outputs", help="The path save generated video")
-    parser.add_argument("--mode", type=str, default="xyz", help="xyz or xzyrgb")
-    parser.add_argument("--type", type=str, default="i2vhbh", help="i2dpm or condpm-i2dpm")
     parser.add_argument("--lora_path", type=str, default=None, help="The path of the LoRA weights to be used")
     parser.add_argument("--lora_rank", type=int, default=64, help="The rank of the LoRA weights to be used")
     parser.add_argument("--meta_data_file", type=str, default=None, help="meta data for GGA")
@@ -306,5 +300,6 @@ if __name__ == "__main__":
     parser.add_argument("--start_idx", type=int, default=-1)
     parser.add_argument("--end_idx", type=int, default=-1)
     parser.add_argument("--depth_root", type=str, default="./example/in_the_wild/depth_maps/", help="root path for depth maps")
+    parser.add_argument("--in_the_wild", action='store_true', help="whether to use in-the-wild inference")
     args = parser.parse_args()
     main(args)
