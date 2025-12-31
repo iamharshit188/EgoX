@@ -25,8 +25,10 @@ https://github.com/user-attachments/assets/5f599ad0-0922-414b-a8ab-e789da068efa
 ---
 
 ### 🔹 By End of December
-- [ ] Release **training code**
-- [ ] Release **data preprocessing code (for train)**
+- [x] Release **training code**
+- [x] Release **data preprocessing code (for train)**
+
+### 🔹 Ongoing
 - [ ] Release **user-friendly interface**
 
 ## 🛠️ Environment Setup
